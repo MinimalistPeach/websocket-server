@@ -1,5 +1,16 @@
 {
+  "name": "websocket-server",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "npx tsx server.ts"
+  },
   "dependencies": {
-    "socket.io": "^4.8.3"
+    "express": "^4.22.1",
+    "socket.io": "^4.8.3",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6"
   }
 }

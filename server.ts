@@ -1,30 +1,15 @@
-import http from "http";
-import { Server } from "socket.io";
+import express from 'express';
+import { createServer } from 'node:http';
+import { Server } from 'socket.io';
 
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("Socket.IO server running");
+const app = express();
+const server = createServer(app);
+const io = new Server(server);
+
+io.on('connection', (socket) => {
+  console.log('a user connected');
 });
 
-const io = new Server(server, {
-  cors: {
-    origin: "*", // Allow all origins for development
-    methods: ["GET", "POST"],
-  },
-});
-
-io.on("connection", (socket) => {
-  console.log("A user connected:", socket.id);
-  socket.on("chat message", (msg) => {
-    console.log("Broadcasting chat message:", msg);
-    io.emit("chat message", msg);
-  });
-  socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-  });
-});
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+server.listen(3000, () => {
+  console.log('server running at http://localhost:3000');
 });
