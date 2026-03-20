@@ -24,6 +24,14 @@ const FPS = 60;
 const FRAME_TIME = 1000 / FPS;
 let gameLoop: NodeJS.Timeout | null = null;
 
+let randomAppleNum = Math.random() * 25;
+const randomApples: { id: string, pos: { x: number, y: number } }[] = [];
+while (randomAppleNum > 0) {
+  randomAppleNum--;
+  const randomPos = getRandomPosition(1000, 1000, 200);
+  randomApples.push({ id: generateUUID(), pos: { x: randomPos.x, y: randomPos.y } });
+}
+
 io.on('connection', (socket) => {
   if (connectedUsers >= 2) {
     console.log('2 users are connected, rejecting new connection', socket.id);
@@ -78,13 +86,6 @@ io.on('connection', (socket) => {
   });
   if (players.length === 2 && !gameLoop) {
     io.emit('send_player_data', players);
-    let randomAppleNum = Math.random() * 25;
-    const randomApples: { id: string, pos: { x: number, y: number } }[] = [];
-    while (randomAppleNum > 0) {
-      randomAppleNum--;
-      const randomPos = getRandomPosition(windowWidth, windowHeight, 500);
-      randomApples.push({ id: generateUUID(), pos: { x: randomPos.x, y: randomPos.y } });
-    }
     io.emit('send_apple_data', randomApples);
     gameLoop = setInterval(() => {
       io.emit('player_moved', players.map(p => ({ id: p.id, pos: p.pos })));
