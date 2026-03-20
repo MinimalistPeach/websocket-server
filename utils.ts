@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 export function getRandomColor() {
     const colors = ['red', 'blue', 'green', 'yellow', 'purple'];
     return colors[Math.floor(Math.random() * colors.length)];
@@ -10,4 +12,8 @@ export function getRandomPosition(width: number, height: number, margin: number 
         x: Math.floor(Math.random() * maxX),
         y: Math.floor(Math.random() * maxY)
     };
+}
+
+export function generateUUID(): string {
+    return randomUUID();
 }

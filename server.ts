@@ -2,7 +2,7 @@ import express from 'express';
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { Player } from './player.js';
-import { getRandomColor, getRandomPosition } from './utils.js';
+import { generateUUID, getRandomColor, getRandomPosition } from './utils.js';
 
 const app = express();
 const server = createServer(app);
@@ -78,6 +78,14 @@ io.on('connection', (socket) => {
   });
   if (players.length === 2 && !gameLoop) {
     io.emit('send_player_data', players);
+    let randomAppleNum = Math.random() * 25;
+    const randomApples: { id: string, pos: { x: number, y: number } }[] = [];
+    while (randomAppleNum > 0) {
+      randomAppleNum--;
+      const randomPos = getRandomPosition(windowWidth, windowHeight, 500);
+      randomApples.push({ id: generateUUID(), pos: { x: randomPos.x, y: randomPos.y } });
+    }
+    io.emit('send_apple_data', randomApples);
     gameLoop = setInterval(() => {
       io.emit('player_moved', players.map(p => ({ id: p.id, pos: p.pos })));
     }, FRAME_TIME);
