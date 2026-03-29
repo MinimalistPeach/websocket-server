@@ -4,19 +4,20 @@ export class Player {
     private _pos: { x: number; y: number; };
     private _body: { x: number; y: number; }[];
     private _length: number;
+    private _direction: string = '';
 
     constructor(id: string, color: string, pos: { x: number, y: number }) {
         this._id = id;
         this._color = color;
         this._pos = pos;
-        this._length = 0;
+        this._length = 1;
         this._body = [{ x: pos.x, y: pos.y }];
     }
 
     public movePlayer(dx: number, dy: number) {
         this._pos.x += dx;
         this._pos.y += dy;
-        this.addBodySegment(this._pos);
+        this.addBodySegment({ x: this._pos.x, y: this._pos.y });
     }
 
     public addBodySegment(pos: { x: number, y: number }) {
@@ -37,6 +38,7 @@ export class Player {
 
     public applyDamage(): 'died' | 'alive' {
         this._body.pop();
+        if (this._length > 1) this._length--;
         if (this._body.length === 0) {
             this.resetBody();
             return 'died';
@@ -80,5 +82,12 @@ export class Player {
 
     public get length(): number {
         return this._length;
+    }
+
+    public get direction(): string {
+        return this._direction;
+    }
+    public set direction(value: string) {
+        this._direction = value;
     }
 }

@@ -27,17 +27,20 @@ let gameLoop: NodeJS.Timeout | null = null;
 const APPLE_PICKUP_RADIUS = 25;
 const PLAYER_SPEED = 5;
 
-let randomAppleNum = Math.random() * 25;
+const APPLE_COUNT = 10;
 const randomApples: { id: string, pos: { x: number, y: number } }[] = [];
-while (randomAppleNum > 0) {
-  randomAppleNum--;
-  const randomPos = getRandomPosition(1000, 1000, 200);
+for (let i = 0; i < APPLE_COUNT; i++) {
+  const randomPos = getRandomPosition(600, 800, 20);
   randomApples.push({ id: generateUUID(), pos: { x: randomPos.x, y: randomPos.y } });
 }
 
 function getDistance(p1: { x: number, y: number }, p2: { x: number, y: number }) {
-  const dx = p1.x - p2.x;
-  const dy = p1.y - p2.y;
+  const maxX = windowWidth || 1000;
+  const maxY = windowHeight || 1000;
+  let dx = Math.abs(p1.x - p2.x);
+  let dy = Math.abs(p1.y - p2.y);
+  if (dx > maxX / 2) dx = maxX - dx;
+  if (dy > maxY / 2) dy = maxY - dy;
   return Math.sqrt(dx * dx + dy * dy);
 }
 
@@ -78,25 +81,9 @@ io.on('connection', (socket) => {
   socket.on('move_player', (data: { direction: string }) => {
     const player = players.find(p => p.id === socket.id);
     if (player) {
-      const speed = 10;
-      let dx = 0, dy = 0;
-      switch (data.direction) {
-        case 'up':
-          dy = -speed;
-          break;
-        case 'down':
-          dy = speed;
-          break;
-        case 'left':
-          dx = -speed;
-          break;
-        case 'right':
-          dx = speed;
-          break;
-      }
-      player.movePlayer(dx, dy);
-      player.pos.x = Math.max(0, Math.min(windowWidth || 1000, player.pos.x));
-      player.pos.y = Math.max(0, Math.min(windowHeight || 1000, player.pos.y));
+      const opposites: Record<string, string> = { up: 'down', down: 'up', left: 'right', right: 'left' };
+      if (player.direction && player.direction === opposites[data.direction]) return;
+      player.direction = data.direction;
     }
   });
 
@@ -129,7 +116,25 @@ io.on('connection', (socket) => {
     const COLLISION_RADIUS = 15;
     const COLLISION_DAMAGE = 20;
 
+    const SPEED = 10;
     gameLoop = setInterval(() => {
+      // Advance each player in their current direction
+      players.forEach((player) => {
+        if (!player.direction) return;
+        let dx = 0, dy = 0;
+        switch (player.direction) {
+          case 'up':    dy = -SPEED; break;
+          case 'down':  dy =  SPEED; break;
+          case 'left':  dx = -SPEED; break;
+          case 'right': dx =  SPEED; break;
+        }
+        const maxX = windowWidth || 1000;
+        const maxY = windowHeight || 1000;
+        player.movePlayer(dx, dy);
+        player.pos.x = ((player.pos.x % maxX) + maxX) % maxX;
+        player.pos.y = ((player.pos.y % maxY) + maxY) % maxY;
+      });
+
       // Handle pickups after movement
       players.forEach((player) => {
         const closestApple = findClosestApple(player.pos);
