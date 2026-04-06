@@ -20,8 +20,8 @@ let connectedUsers = 0;
 let windowWidth = 0;
 let windowHeight = 0;
 
-const FPS = 60;
-const FRAME_TIME = 1000 / FPS;
+const TICK_RATE = 20;
+const FRAME_TIME = 1000 / TICK_RATE;
 let gameLoop: NodeJS.Timeout | null = null;
 
 const APPLE_PICKUP_RADIUS = 25;
@@ -30,7 +30,7 @@ const PLAYER_SPEED = 5;
 const APPLE_COUNT = 10;
 const randomApples: { id: string, pos: { x: number, y: number } }[] = [];
 for (let i = 0; i < APPLE_COUNT; i++) {
-  const randomPos = getRandomPosition(600, 800, 20);
+  const randomPos = getRandomPosition(800, 800, 40);
   randomApples.push({ id: generateUUID(), pos: { x: randomPos.x, y: randomPos.y } });
 }
 
@@ -112,13 +112,12 @@ io.on('connection', (socket) => {
     io.emit('send_player_data', players);
     io.emit('send_apple_data', randomApples);
 
-    const AVOID_DISTANCE = 120;
+    const AVOID_DISTANCE = 160;
     const COLLISION_RADIUS = 15;
     const COLLISION_DAMAGE = 20;
 
-    const SPEED = 10;
+    const SPEED = 40;
     gameLoop = setInterval(() => {
-      // Advance each player in their current direction
       players.forEach((player) => {
         if (!player.direction) return;
         let dx = 0, dy = 0;
@@ -135,7 +134,6 @@ io.on('connection', (socket) => {
         player.pos.y = ((player.pos.y % maxY) + maxY) % maxY;
       });
 
-      // Handle pickups after movement
       players.forEach((player) => {
         const closestApple = findClosestApple(player.pos);
         if (closestApple && getDistance(player.pos, closestApple.pos) <= APPLE_PICKUP_RADIUS) {
@@ -150,7 +148,6 @@ io.on('connection', (socket) => {
         }
       });
 
-      // Handle collision detection
       players.forEach((player) => {
         if (!player.isAlive()) return;
         players.forEach((other) => {

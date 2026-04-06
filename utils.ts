@@ -5,12 +5,16 @@ export function getRandomColor() {
     return colors[Math.floor(Math.random() * colors.length)];
 }
 
-export function getRandomPosition(width: number, height: number, margin: number = 20) {
-    const maxX = width - margin;
-    const maxY = height - margin;
+export function getRandomPosition(width: number, height: number, gridSize: number = 40) {
+    const cols = Math.floor(width / gridSize);
+    const rows = Math.floor(height / gridSize);
+
+    const randomCol = Math.floor(Math.random() * cols);
+    const randomRow = Math.floor(Math.random() * rows);
+
     return {
-        x: Math.floor(Math.random() * maxX),
-        y: Math.floor(Math.random() * maxY)
+        x: randomCol * gridSize + gridSize / 2,
+        y: randomRow * gridSize + gridSize / 2
     };
 }
 
