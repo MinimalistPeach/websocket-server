@@ -25,7 +25,6 @@ const FRAME_TIME = 1000 / TICK_RATE;
 let gameLoop: NodeJS.Timeout | null = null;
 
 const APPLE_PICKUP_RADIUS = 25;
-const PLAYER_SPEED = 5;
 
 const APPLE_COUNT = 10;
 const randomApples: { id: string, pos: { x: number, y: number } }[] = [];
@@ -112,9 +111,7 @@ io.on('connection', (socket) => {
     io.emit('send_player_data', players);
     io.emit('send_apple_data', randomApples);
 
-    const AVOID_DISTANCE = 160;
     const COLLISION_RADIUS = 15;
-    const COLLISION_DAMAGE = 20;
 
     const SPEED = 40;
     gameLoop = setInterval(() => {
