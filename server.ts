@@ -24,6 +24,8 @@ const TICK_RATE = 20;
 const FRAME_TIME = 1000 / TICK_RATE;
 let gameLoop: NodeJS.Timeout | null = null;
 
+const opposites: Record<string, string> = { up: 'down', down: 'up', left: 'right', right: 'left' };
+
 const APPLE_PICKUP_RADIUS = 25;
 
 const APPLE_COUNT = 10;
@@ -80,8 +82,7 @@ io.on('connection', (socket) => {
   socket.on('move_player', (data: { direction: string }) => {
     const player = players.find(p => p.id === socket.id);
     if (player) {
-      const opposites: Record<string, string> = { up: 'down', down: 'up', left: 'right', right: 'left' };
-      if (player.direction && player.direction === opposites[data.direction]) return;
+      if (player.direction === opposites[data.direction]) return;
       player.direction = data.direction;
     }
   });
@@ -113,16 +114,16 @@ io.on('connection', (socket) => {
 
     const COLLISION_RADIUS = 15;
 
-    const SPEED = 40;
+    const SPEED = 10;
     gameLoop = setInterval(() => {
       players.forEach((player) => {
         if (!player.direction) return;
         let dx = 0, dy = 0;
         switch (player.direction) {
-          case 'up':    dy = -SPEED; break;
-          case 'down':  dy =  SPEED; break;
-          case 'left':  dx = -SPEED; break;
-          case 'right': dx =  SPEED; break;
+          case 'up': dy = -SPEED; break;
+          case 'down': dy = SPEED; break;
+          case 'left': dx = -SPEED; break;
+          case 'right': dx = SPEED; break;
         }
         const maxX = windowWidth || 1000;
         const maxY = windowHeight || 1000;
