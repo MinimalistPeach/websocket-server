@@ -97,17 +97,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on("player_died", (data: { id: string }) => {
-    const player = players.find(p => p.id === data.id);
-    if (player) {
-      player.resetBody();
-      io.emit("game_over", { id: player.id });
-      clearInterval(gameLoop!);
-      gameLoop = null;
-    }
-  });
-
-
   if (players.length === 2 && !gameLoop) {
     io.emit('send_player_data', players);
     io.emit('send_apple_data', randomApples);
@@ -141,28 +130,12 @@ io.on('connection', (socket) => {
             randomApples.splice(index, 1);
             const newApplePos = getRandomPosition(windowWidth || 1000, windowHeight || 1000);
             randomApples.push({ id: generateUUID(), pos: { x: newApplePos.x, y: newApplePos.y } });
-            io.emit('apple_picked', { playerId: player.id, appleId: closestApple.id });
           }
         }
       });
 
       players.forEach((player) => {
         if (!player.isAlive()) return;
-        players.forEach((other) => {
-          if (other.id === player.id || !other.isAlive()) return;
-          for (const segment of other.body) {
-            if (getDistance(player.pos, segment) <= COLLISION_RADIUS) {
-              const result = player.applyDamage();
-              io.emit('player_hit', {
-                crashed: player.id,
-                crasher: other.id,
-                length: player.length,
-                died: result === 'died',
-              });
-              break;
-            }
-          }
-        });
       });
 
       io.emit('player_moved', players.map((p) => ({ id: p.id, pos: p.pos, body: p.body, length: p.length })));
