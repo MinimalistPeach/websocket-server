@@ -1,3 +1,5 @@
+type Direction = "up" | "down" | "left" | "right";
+
 export class Player {
     private _id: string;
     private _color: string;
@@ -10,19 +12,57 @@ export class Player {
         this._id = id;
         this._color = color;
         this._pos = pos;
-        this._length = 1;
+        this._length = 3;
         this._body = [{ x: pos.x, y: pos.y }];
     }
 
     public movePlayer(dx: number, dy: number) {
-        this._pos.x += dx;
-        this._pos.y += dy;
+        const windowWidth = 800;
+        const windowHeight = 800;
+        const margin = 20;
+
+        let nextX = this._pos.x + dx;
+        let nextY = this._pos.y + dy;
+
+        if (nextX < margin || nextX > windowWidth - margin || 
+        nextY < margin || nextY > windowHeight - margin) {
+        
+            this.autoTurn(windowWidth, windowHeight);
+            this.addBodySegment({ x: this._pos.x, y: this._pos.y });
+            return; 
+        }
+
+        this._pos.x = nextX;
+        this._pos.y = nextY;
         this.addBodySegment({ x: this._pos.x, y: this._pos.y });
+    }
+
+    public autoTurn(width: number, height: number) {
+        const possibleDirs: Direction[] = [];
+        const margin = 20;
+
+        if (this._pos.y > margin) possibleDirs.push("up");
+        if (this._pos.y < height - margin) possibleDirs.push("down");
+        if (this._pos.x > margin) possibleDirs.push("left");
+        if (this._pos.x < width - margin) possibleDirs.push("right");
+
+        const opposite: Record<Direction, Direction> = {
+            up: "down",
+            down: "up",
+            left: "right",
+            right: "left"
+        };
+
+        const validChoices = possibleDirs.filter(d => d !== opposite[this._direction as Direction]);
+
+        if (validChoices.length > 0) {
+            this._direction = validChoices[Math.floor(Math.random() * validChoices.length)];
+        }
     }
 
     public addBodySegment(pos: { x: number, y: number }) {
         this._body.unshift({ x: pos.x, y: pos.y });
-        if (this._body.length > this._length) {
+        while (this._body.length > this._length) {
             this._body.pop();
         }
     }
@@ -31,23 +71,16 @@ export class Player {
         this._length += 1;
     }
 
-    public resetBody() {
-        this._body = [{ x: this._pos.x, y: this._pos.y }];
-        this._length = 5;
-    }
-
-    public applyDamage(): 'died' | 'alive' {
-        this._body.pop();
-        if (this._length > 1) this._length--;
-        if (this._body.length === 0) {
-            this.resetBody();
-            return 'died';
+    public applyDamage() {
+        if (this._length > 1) {
+            this._length -= 1;
+        } else {
+            this._length = 0;
         }
-        return 'alive';
     }
 
     public isAlive(): boolean {
-        return this._body.length > 0;
+        return this._body.length > 1;
     }
 
     public getDistanceFromOtherPlayer(other: Player): number {
