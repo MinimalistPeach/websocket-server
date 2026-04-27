@@ -1,16 +1,23 @@
-import express from 'express';
-import { createServer } from 'node:http';
-import { Server } from 'socket.io';
-import { Player } from './player.js';
-import { generateUUID, getRandomColor, getRandomPosition, getSafeApplePosition } from './utils.js';
+import express from "express";
+import { createServer } from "node:http";
+import { Server } from "socket.io";
+import { Player } from "./player.js";
+import {
+  generateUUID,
+  getRandomColor,
+  getRandomPosition,
+  getSafeApplePosition,
+} from "./utils.js";
+
+type AppleType = "normal" | "golden" | "blue" | "green";
 
 const SETTINGS = {
-    BOARD_WIDTH: 800,
-    BOARD_HEIGHT: 800,
-    CELL_SIZE: 40,
-    APPLE_COUNT: 10,
-    INITIAL_LENGTH: 3,
-    TICK_RATE: 10,
+  BOARD_WIDTH: 1200,
+  BOARD_HEIGHT: 1200,
+  CELL_SIZE: 40,
+  APPLE_COUNT: 10,
+  INITIAL_LENGTH: 5,
+  TICK_RATE: 10,
 };
 
 const app = express();
@@ -18,94 +25,152 @@ const server = createServer(app);
 const io = new Server(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
-  }
+    methods: ["GET", "POST"],
+  },
 });
 
 let players: Player[] = [];
-let randomApples: { id: string, pos: { x: number, y: number } }[] = [];
+let randomApples: {
+  id: string;
+  pos: { x: number; y: number };
+  type: AppleType;
+}[] = [];
 let gameLoop: NodeJS.Timeout | null = null;
-const opposites: Record<string, string> = { up: 'down', down: 'up', left: 'right', right: 'left' };
-const occupiedPoints = players.flatMap(p => p.body);
+let gameStarted = false;
+const opposites: Record<string, string> = {
+  up: "down",
+  down: "up",
+  left: "right",
+  right: "left",
+};
 
-function spawnApples() {
-    randomApples = [];
-    for (let i = 0; i < SETTINGS.APPLE_COUNT; i++) {
-        randomApples.push({ 
-            id: generateUUID(), 
-            pos: getSafeApplePosition(SETTINGS.BOARD_WIDTH, SETTINGS.BOARD_HEIGHT, SETTINGS.CELL_SIZE, occupiedPoints)
-        });
-    }
+function getRandomAppleType(): AppleType {
+  const roll = Math.random();
+  if (roll < 0.05) return "green";
+  if (roll < 0.15) return "blue";
+  if (roll < 0.3) return "golden";
+  return "normal";
 }
 
-io.on('connection', (socket) => {
+function spawnApples() {
+  const occupiedPoints = players.flatMap((p) => p.body);
+  randomApples = [];
+  for (let i = 0; i < SETTINGS.APPLE_COUNT; i++) {
+    randomApples.push({
+      id: generateUUID(),
+      pos: getSafeApplePosition(
+        SETTINGS.BOARD_WIDTH,
+        SETTINGS.BOARD_HEIGHT,
+        SETTINGS.CELL_SIZE,
+        occupiedPoints,
+      ),
+      type: getRandomAppleType(),
+    });
+  }
+}
+
+io.on("connection", (socket) => {
   if (players.length >= 2) {
-    console.log('2 users are connected, rejecting new connection', socket.id);
-    socket.emit('enough_users');
+    console.log("2 users are connected, rejecting new connection", socket.id);
+    socket.emit("enough_users");
     socket.disconnect();
     return;
   }
 
-  console.log('a user connected', socket.id);
-  const newPlayer = new Player(socket.id, getRandomColor(), getRandomPosition(SETTINGS.BOARD_WIDTH, SETTINGS.BOARD_HEIGHT));
+  console.log("a user connected", socket.id);
+  const newPlayer = new Player(
+    socket.id,
+    getRandomColor(),
+    getRandomPosition(SETTINGS.BOARD_WIDTH, SETTINGS.BOARD_HEIGHT),
+    SETTINGS.INITIAL_LENGTH,
+  );
   players.push(newPlayer);
 
-  socket.on('move_player', (data: { direction: string }) => {
-    const player = players.find(p => p.id === socket.id);
+  socket.on("move_player", (data: { direction: string }) => {
+    const player = players.find((p) => p.id === socket.id);
     if (player && player.direction !== opposites[data.direction]) {
       player.direction = data.direction;
     }
   });
 
-  socket.on('disconnect', () => {
-    console.log('user disconnected', socket.id);
-    players = players.filter(p => p.id !== socket.id);
+  socket.on("disconnect", () => {
+    console.log("user disconnected", socket.id);
+    players = players.filter((p) => p.id !== socket.id);
 
-    if (gameLoop && players.length < 2) {
+    if (gameLoop) {
       clearInterval(gameLoop);
       gameLoop = null;
     }
+    gameStarted = false;
     randomApples = [];
+    gameState();
   });
 
-  if (players.length === 2 && !gameLoop) {
-    spawnApples();
-    socket.emit('send_apple_data', randomApples);
+  socket.on("player_ready", (data: { ready: boolean }) => {
+    const player = players.find((p) => p.id === socket.id);
+    if (!player) return;
+    player.isReady = data.ready;
+    gameState();
+    tryStartGame();
+  });
 
-    gameLoop = setInterval(updateLogic, 1000 / SETTINGS.TICK_RATE);
-  }
+  gameState();
+  tryStartGame();
 });
 
 function updateLogic() {
+  if (!gameStarted) return;
   movePlayers();
   checkCollisions();
   checkWinner();
-  handleAppleEating();
   gameState();
 }
 
 function movePlayers() {
-  players.forEach(p => {
-    if (!p.isAlive || !p.direction) return;
+  players.forEach((p) => {
+    if (!p.isAlive() || !p.direction) return;
 
-    let dx = 0, dy = 0;
+    let dx = 0,
+      dy = 0;
     switch (p.direction) {
-      case 'up': dy = -SETTINGS.CELL_SIZE; break;
-      case 'down': dy = SETTINGS.CELL_SIZE; break;
-      case 'left': dx = -SETTINGS.CELL_SIZE; break;
-      case 'right': dx = SETTINGS.CELL_SIZE; break;
+      case "up":
+        dy = -SETTINGS.CELL_SIZE;
+        break;
+      case "down":
+        dy = SETTINGS.CELL_SIZE;
+        break;
+      case "left":
+        dx = -SETTINGS.CELL_SIZE;
+        break;
+      case "right":
+        dx = SETTINGS.CELL_SIZE;
+        break;
     }
-    p.movePlayer(dx, dy);
+
+    const visitedPositions = p.movePlayer(
+      dx,
+      dy,
+      SETTINGS.BOARD_WIDTH,
+      SETTINGS.BOARD_HEIGHT,
+    );
+
+    if (visitedPositions.length > 0) {
+      handleAppleEating(p, visitedPositions);
+    }
   });
 }
 
 function checkCollisions() {
-  players.forEach(p => {
-    if (!p.isAlive) return;
+  players.forEach((p) => {
+    if (!p.isAlive()) return;
 
-    const hitSelf = p.body.slice(1).some(s => s.x === p.pos.x && s.y === p.pos.y);  
-    const hitOther = players.some(other => 
-      p.id !== other.id && other.body.some(s => s.x === p.pos.x && s.y === p.pos.y)
+    const hitSelf = p.body
+      .slice(1)
+      .some((s) => s.x === p.pos.x && s.y === p.pos.y);
+    const hitOther = players.some(
+      (other) =>
+        p.id !== other.id &&
+        other.body.some((s) => s.x === p.pos.x && s.y === p.pos.y),
     );
 
     if (hitSelf || hitOther) {
@@ -115,46 +180,98 @@ function checkCollisions() {
 }
 
 function checkWinner() {
-  const alivePlayers = players.filter(p => p.isAlive());
+  const alivePlayers = players.filter((p) => p.isAlive());
 
-  if (players.length >= 2 && alivePlayers.length === 1) {
-    const winner = alivePlayers[0];
-    io.emit('game_over', { winnerId: winner.id });
-    console.log("Győztes:", winner.id);
+  if (players.length >= 2 && alivePlayers.length <= 1) {
+    const winnerId = alivePlayers[0]?.id || null;
+    io.emit("game_over", { winnerId });
+    if (winnerId) {
+      console.log("Győztes:", winnerId);
+    } else {
+      console.log("Döntetlen: mindkét kígyó túl rövid.");
+    }
+    if (gameLoop) {
+      clearInterval(gameLoop);
+      gameLoop = null;
+    }
+    gameStarted = false;
   }
 }
 
-function handleAppleEating() {
-  players.forEach(p => {
-    if (!p.isAlive) return;
-    
-    const appleIndex = randomApples.findIndex(a => a.pos.x === p.pos.x && a.pos.y === p.pos.y);
+function handleAppleEating(
+  player: Player,
+  positions: { x: number; y: number }[],
+) {
+  positions.forEach((pos) => {
+    const appleIndex = randomApples.findIndex(
+      (a) => a.pos.x === pos.x && a.pos.y === pos.y,
+    );
 
-    if (appleIndex !== -1) {
-      p.grow();
-      const occupied = players.flatMap(player => player.body);
-      
-      randomApples[appleIndex] = {
-        id: generateUUID(),
-        pos: getSafeApplePosition(SETTINGS.BOARD_WIDTH, SETTINGS.BOARD_HEIGHT, SETTINGS.CELL_SIZE, occupied)
-      };
-      io.emit('send_apple_data', randomApples);
+    if (appleIndex === -1) return;
+
+    const apple = randomApples[appleIndex];
+    const occupied = players.flatMap((player) => player.body);
+
+    switch (apple.type) {
+      case "golden":
+        player.grow(3);
+        break;
+      case "blue":
+        player.increaseSpeed();
+        break;
+      case "green":
+        player.applyDamage();
+        break;
+      default:
+        player.grow(1);
     }
+
+    randomApples[appleIndex] = {
+      id: generateUUID(),
+      pos: getSafeApplePosition(
+        SETTINGS.BOARD_WIDTH,
+        SETTINGS.BOARD_HEIGHT,
+        SETTINGS.CELL_SIZE,
+        occupied,
+      ),
+      type: getRandomAppleType(),
+    };
+    io.emit("send_apple_data", randomApples);
   });
 }
 
+function playersReady(): boolean {
+  return players.length === 2 && players.every((player) => player.isReady);
+}
+
+function tryStartGame() {
+  if (gameStarted || gameLoop || !playersReady()) return;
+
+  gameStarted = true;
+  spawnApples();
+  io.emit("send_apple_data", randomApples);
+  io.emit("game_started");
+  gameState();
+  gameLoop = setInterval(updateLogic, 1000 / SETTINGS.TICK_RATE);
+}
+
 function gameState() {
-  io.emit('player_moved', players.map(p => ({
-    id: p.id,
-    color: p.color,
-    pos: p.pos,
-    body: p.body,
-    length: p.length,
-    direction: p.direction,
-    isAlive: p.isAlive
-  })));
+  io.emit(
+    "player_moved",
+    players.map((p) => ({
+      id: p.id,
+      color: p.color,
+      pos: p.pos,
+      body: p.body,
+      length: p.length,
+      speed: p.speed,
+      direction: p.direction,
+      isAlive: p.isAlive(),
+      isReady: p.isReady,
+    })),
+  );
 }
 
 server.listen(3000, () => {
-  console.log('server running at http://localhost:3000');
+  console.log("server running at http://localhost:3000");
 });
