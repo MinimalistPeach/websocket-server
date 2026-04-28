@@ -1,4 +1,7 @@
 import express from "express";
+import Database from "better-sqlite3";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
 import { Player } from "./player.js";
@@ -12,8 +15,8 @@ import {
 type AppleType = "normal" | "golden" | "blue" | "green";
 
 const SETTINGS = {
-  BOARD_WIDTH: 1200,
-  BOARD_HEIGHT: 1200,
+  BOARD_WIDTH: 800,
+  BOARD_HEIGHT: 800,
   CELL_SIZE: 40,
   APPLE_COUNT: 10,
   INITIAL_LENGTH: 5,
@@ -27,6 +30,40 @@ const io = new Server(server, {
     origin: "*",
     methods: ["GET", "POST"],
   },
+});
+
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  next();
+});
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const dbPath = path.join(__dirname, "matches.db");
+const db = new Database(dbPath);
+
+db.prepare(
+  `CREATE TABLE IF NOT EXISTS matches (
+    ID INTEGER PRIMARY KEY AUTOINCREMENT,
+    Player_1_ID TEXT NOT NULL,
+    Player_2_ID TEXT NOT NULL,
+    Winner_Player_ID TEXT
+  )`,
+).run();
+
+function saveMatchResult(player1Id: string, player2Id: string, winnerId: string | null) {
+  db.prepare(
+    `INSERT INTO matches (Player_1_ID, Player_2_ID, Winner_Player_ID) VALUES (?, ?, ?)`,
+  ).run(player1Id, player2Id, winnerId);
+}
+
+app.get("/matches", (_req, res) => {
+  const rows = db
+    .prepare("SELECT ID, Player_1_ID, Player_2_ID, Winner_Player_ID FROM matches ORDER BY ID DESC")
+    .all();
+  res.json(rows);
 });
 
 let players: Player[] = [];
@@ -80,7 +117,7 @@ io.on("connection", (socket) => {
   console.log("a user connected", socket.id);
   const newPlayer = new Player(
     socket.id,
-    getRandomColor(),
+    getRandomColor(players.map((p) => p.color)),
     getRandomPosition(SETTINGS.BOARD_WIDTH, SETTINGS.BOARD_HEIGHT),
     SETTINGS.INITIAL_LENGTH,
   );
@@ -185,6 +222,9 @@ function checkWinner() {
   if (players.length >= 2 && alivePlayers.length <= 1) {
     const winnerId = alivePlayers[0]?.id || null;
     io.emit("game_over", { winnerId });
+    if (players[0] && players[1]) {
+      saveMatchResult(players[0].id, players[1].id, winnerId);
+    }
     if (winnerId) {
       console.log("Győztes:", winnerId);
     } else {

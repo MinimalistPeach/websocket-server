@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-export function getRandomColor() {
+export function getRandomColor(excludedColors: string[] = []) {
     const colors = ['blue', 'green', 'yellow', 'purple'];
-    return colors[Math.floor(Math.random() * colors.length)];
+    const availableColors = colors.filter((color) => !excludedColors.includes(color));
+    const options = availableColors.length > 0 ? availableColors : colors;
+    return options[Math.floor(Math.random() * options.length)];
 }
 
 export function getSafeApplePosition(

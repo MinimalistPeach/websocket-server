@@ -32,3 +32,4 @@ coverage/
 # Others
 *.swp
 *.swo
+*.db
