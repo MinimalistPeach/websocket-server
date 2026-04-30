@@ -348,9 +348,9 @@ function checkWinner() {
       saveMatchResult(players[0].id, players[1].id, winnerId);
     }
     if (winnerId) {
-      console.log("Győztes:", winnerId);
+      console.log("Winner:", winnerId);
     } else {
-      console.log("Döntetlen: mindkét kígyó túl rövid.");
+      console.log("Draw: both snakes are too short.");
     }
     if (gameLoop) {
       clearInterval(gameLoop);
