@@ -1,5 +1,5 @@
 import express from "express";
-import Database from "better-sqlite3";
+import sqlite3 from "sqlite3";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
@@ -42,28 +42,44 @@ app.use((req, res, next) => {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const dbPath = path.join(__dirname, "matches.db");
-const db = new Database(dbPath);
-
-db.prepare(
-  `CREATE TABLE IF NOT EXISTS matches (
-    ID INTEGER PRIMARY KEY AUTOINCREMENT,
-    Player_1_ID TEXT NOT NULL,
-    Player_2_ID TEXT NOT NULL,
-    Winner_Player_ID TEXT
-  )`,
-).run();
+const db = new sqlite3.Database(dbPath, (err) => {
+  if (err) {
+    console.error("Failed to connect to database:", err);
+  } else {
+    db.run(
+      `CREATE TABLE IF NOT EXISTS matches (
+        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        Player_1_ID TEXT NOT NULL,
+        Player_2_ID TEXT NOT NULL,
+        Winner_Player_ID TEXT
+      )`
+    );
+  }
+});
 
 function saveMatchResult(player1Id: string, player2Id: string, winnerId: string | null) {
-  db.prepare(
+  db.run(
     `INSERT INTO matches (Player_1_ID, Player_2_ID, Winner_Player_ID) VALUES (?, ?, ?)`,
-  ).run(player1Id, player2Id, winnerId);
+    [player1Id, player2Id, winnerId],
+    (err) => {
+      if (err) {
+        console.error("Failed to save match result:", err);
+      }
+    }
+  );
 }
 
 app.get("/matches", (_req, res) => {
-  const rows = db
-    .prepare("SELECT ID, Player_1_ID, Player_2_ID, Winner_Player_ID FROM matches ORDER BY ID DESC")
-    .all();
-  res.json(rows);
+  db.all(
+    "SELECT ID, Player_1_ID, Player_2_ID, Winner_Player_ID FROM matches ORDER BY ID DESC",
+    (err, rows) => {
+      if (err) {
+        res.status(500).json({ error: "Failed to fetch matches" });
+      } else {
+        res.json(rows);
+      }
+    }
+  );
 });
 
 let players: Player[] = [];
@@ -163,13 +179,119 @@ function updateLogic() {
   gameState();
 }
 
+function wouldCollideWithDirection(
+  player: typeof players[0],
+  direction: string,
+  margin: number = 20
+): boolean {
+  let dx = 0,
+    dy = 0;
+  switch (direction) {
+    case "up":
+      dy = -SETTINGS.CELL_SIZE;
+      break;
+    case "down":
+      dy = SETTINGS.CELL_SIZE;
+      break;
+    case "left":
+      dx = -SETTINGS.CELL_SIZE;
+      break;
+    case "right":
+      dx = SETTINGS.CELL_SIZE;
+      break;
+  }
+
+  const nextX = player.pos.x + dx;
+  const nextY = player.pos.y + dy;
+
+  // Check wall collision
+  if (
+    nextX < margin ||
+    nextX > SETTINGS.BOARD_WIDTH - margin ||
+    nextY < margin ||
+    nextY > SETTINGS.BOARD_HEIGHT - margin
+  ) {
+    return true;
+  }
+
+  // Check self collision (skip head)
+  if (player.body.slice(1).some((s) => s.x === nextX && s.y === nextY)) {
+    return true;
+  }
+
+  // Check other snake collision
+  if (
+    players.some(
+      (other) =>
+        player.id !== other.id &&
+        other.body.some((s) => s.x === nextX && s.y === nextY)
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function movePlayers() {
   players.forEach((p) => {
     if (!p.isAlive() || !p.direction) return;
 
+    let directionToUse = p.direction;
+
+    // If current direction would cause collision, find a safe direction
+    if (wouldCollideWithDirection(p, directionToUse)) {
+      const safeDirections: string[] = [];
+      const possibleDirs = ["up", "down", "left", "right"];
+
+      // Find all safe directions (simple collision check, no BFS needed here)
+      for (const dir of possibleDirs) {
+        if (dir !== opposites[directionToUse] && !wouldCollideWithDirection(p, dir)) {
+          safeDirections.push(dir);
+        }
+      }
+
+      // Pick a safe direction - prefer the one moving toward closest apple
+      if (safeDirections.length > 0) {
+        if (randomApples.length > 0) {
+          // Simple greedy: pick safe direction closest to nearest apple
+          let closestApple = randomApples[0];
+          let bestDist = Infinity;
+          randomApples.forEach((a) => {
+            const d = Math.abs(p.pos.x - a.pos.x) + Math.abs(p.pos.y - a.pos.y);
+            if (d < bestDist) {
+              bestDist = d;
+              closestApple = a;
+            }
+          });
+
+          // Pick safe direction that moves closer to apple
+          let bestSafeDir = safeDirections[0];
+          let bestScore = Infinity;
+          safeDirections.forEach((dir) => {
+            let nextX = p.pos.x,
+              nextY = p.pos.y;
+            if (dir === "up") nextY -= SETTINGS.CELL_SIZE;
+            else if (dir === "down") nextY += SETTINGS.CELL_SIZE;
+            else if (dir === "left") nextX -= SETTINGS.CELL_SIZE;
+            else if (dir === "right") nextX += SETTINGS.CELL_SIZE;
+
+            const dist = Math.abs(nextX - closestApple.pos.x) + Math.abs(nextY - closestApple.pos.y);
+            if (dist < bestScore) {
+              bestScore = dist;
+              bestSafeDir = dir;
+            }
+          });
+          directionToUse = bestSafeDir;
+        } else {
+          directionToUse = safeDirections[0];
+        }
+      }
+    }
+
     let dx = 0,
       dy = 0;
-    switch (p.direction) {
+    switch (directionToUse) {
       case "up":
         dy = -SETTINGS.CELL_SIZE;
         break;
