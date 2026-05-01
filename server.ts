@@ -83,6 +83,17 @@ app.get("/matches", (_req, res) => {
 });
 
 let players: Player[] = [];
+let playerStates: Record<string, {
+  id: string;
+  pos: { x: number; y: number };
+  body: { x: number; y: number }[];
+  length: number;
+  speed: number;
+  direction: string;
+  isAlive: boolean;
+  isReady: boolean;
+  color: string;
+}> = {};
 let randomApples: {
   id: string;
   pos: { x: number; y: number };
@@ -106,7 +117,7 @@ function getRandomAppleType(): AppleType {
 }
 
 function spawnApples() {
-  const occupiedPoints = players.flatMap((p) => p.body);
+  const occupiedPoints = Object.values(playerStates).flatMap((p) => p.body);
   randomApples = [];
   for (let i = 0; i < SETTINGS.APPLE_COUNT; i++) {
     randomApples.push({
@@ -138,17 +149,36 @@ io.on("connection", (socket) => {
     SETTINGS.INITIAL_LENGTH,
   );
   players.push(newPlayer);
+  playerStates[socket.id] = {
+    id: socket.id,
+    pos: newPlayer.pos,
+    body: [...newPlayer.body],
+    length: newPlayer.length,
+    speed: newPlayer.speed,
+    direction: newPlayer.direction,
+    isAlive: newPlayer.isAlive(),
+    isReady: false,
+    color: newPlayer.color,
+  };
 
-  socket.on("move_player", (data: { direction: string }) => {
-    const player = players.find((p) => p.id === socket.id);
-    if (player && player.direction !== opposites[data.direction]) {
-      player.direction = data.direction;
+  socket.on("update_snake_state", (data: any) => {
+    if (playerStates[socket.id]) {
+      playerStates[socket.id] = {
+        ...playerStates[socket.id],
+        pos: data.pos,
+        body: data.body,
+        length: data.length,
+        speed: data.speed,
+        direction: data.direction,
+        isAlive: data.isAlive,
+      };
     }
   });
 
   socket.on("disconnect", () => {
     console.log("user disconnected", socket.id);
     players = players.filter((p) => p.id !== socket.id);
+    delete playerStates[socket.id];
 
     if (gameLoop) {
       clearInterval(gameLoop);
@@ -156,202 +186,95 @@ io.on("connection", (socket) => {
     }
     gameStarted = false;
     randomApples = [];
-    gameState();
+    broadcastGameState();
   });
 
   socket.on("player_ready", (data: { ready: boolean }) => {
     const player = players.find((p) => p.id === socket.id);
     if (!player) return;
     player.isReady = data.ready;
-    gameState();
+    if (playerStates[socket.id]) {
+      playerStates[socket.id].isReady = data.ready;
+    }
+    broadcastGameState();
     tryStartGame();
   });
 
-  gameState();
+  broadcastGameState();
   tryStartGame();
 });
 
 function updateLogic() {
   if (!gameStarted) return;
-  movePlayers();
-  checkCollisions();
+  checkAppleCollisions();
   checkWinner();
-  gameState();
+  broadcastGameState();
 }
 
-function wouldCollideWithDirection(
-  player: typeof players[0],
-  direction: string,
-  margin: number = 20
-): boolean {
-  let dx = 0,
-    dy = 0;
-  switch (direction) {
-    case "up":
-      dy = -SETTINGS.CELL_SIZE;
-      break;
-    case "down":
-      dy = SETTINGS.CELL_SIZE;
-      break;
-    case "left":
-      dx = -SETTINGS.CELL_SIZE;
-      break;
-    case "right":
-      dx = SETTINGS.CELL_SIZE;
-      break;
-  }
+function checkAppleCollisions() {
+  Object.keys(playerStates).forEach((playerId) => {
+    const playerState = playerStates[playerId];
+    if (!playerState || !playerState.isAlive) return;
 
-  const nextX = player.pos.x + dx;
-  const nextY = player.pos.y + dy;
+    playerState.body.forEach((pos) => {
+      const appleIndex = randomApples.findIndex(
+        (a) => a.pos.x === pos.x && a.pos.y === pos.y,
+      );
 
-  // Check wall collision
-  if (
-    nextX < margin ||
-    nextX > SETTINGS.BOARD_WIDTH - margin ||
-    nextY < margin ||
-    nextY > SETTINGS.BOARD_HEIGHT - margin
-  ) {
-    return true;
-  }
+      if (appleIndex === -1) return;
 
-  // Check self collision (skip head)
-  if (player.body.slice(1).some((s) => s.x === nextX && s.y === nextY)) {
-    return true;
-  }
+      const apple = randomApples[appleIndex];
+      const occupied = Object.values(playerStates)
+        .flatMap((p) => p.body);
 
-  // Check other snake collision
-  if (
-    players.some(
-      (other) =>
-        player.id !== other.id &&
-        other.body.some((s) => s.x === nextX && s.y === nextY)
-    )
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-function movePlayers() {
-  players.forEach((p) => {
-    if (!p.isAlive() || !p.direction) return;
-
-    let directionToUse = p.direction;
-
-    // If current direction would cause collision, find a safe direction
-    if (wouldCollideWithDirection(p, directionToUse)) {
-      const safeDirections: string[] = [];
-      const possibleDirs = ["up", "down", "left", "right"];
-
-      // Find all safe directions (simple collision check, no BFS needed here)
-      for (const dir of possibleDirs) {
-        if (dir !== opposites[directionToUse] && !wouldCollideWithDirection(p, dir)) {
-          safeDirections.push(dir);
-        }
+      switch (apple.type) {
+        case "golden":
+          playerState.length += 3;
+          break;
+        case "blue":
+          playerState.speed += 1;
+          break;
+        case "green":
+          if (playerState.length > 2) {
+            playerState.length -= 1;
+          }
+          break;
+        default:
+          playerState.length += 1;
       }
 
-      // Pick a safe direction - prefer the one moving toward closest apple
-      if (safeDirections.length > 0) {
-        if (randomApples.length > 0) {
-          // Simple greedy: pick safe direction closest to nearest apple
-          let closestApple = randomApples[0];
-          let bestDist = Infinity;
-          randomApples.forEach((a) => {
-            const d = Math.abs(p.pos.x - a.pos.x) + Math.abs(p.pos.y - a.pos.y);
-            if (d < bestDist) {
-              bestDist = d;
-              closestApple = a;
-            }
-          });
-
-          // Pick safe direction that moves closer to apple
-          let bestSafeDir = safeDirections[0];
-          let bestScore = Infinity;
-          safeDirections.forEach((dir) => {
-            let nextX = p.pos.x,
-              nextY = p.pos.y;
-            if (dir === "up") nextY -= SETTINGS.CELL_SIZE;
-            else if (dir === "down") nextY += SETTINGS.CELL_SIZE;
-            else if (dir === "left") nextX -= SETTINGS.CELL_SIZE;
-            else if (dir === "right") nextX += SETTINGS.CELL_SIZE;
-
-            const dist = Math.abs(nextX - closestApple.pos.x) + Math.abs(nextY - closestApple.pos.y);
-            if (dist < bestScore) {
-              bestScore = dist;
-              bestSafeDir = dir;
-            }
-          });
-          directionToUse = bestSafeDir;
-        } else {
-          directionToUse = safeDirections[0];
-        }
-      }
-    }
-
-    let dx = 0,
-      dy = 0;
-    switch (directionToUse) {
-      case "up":
-        dy = -SETTINGS.CELL_SIZE;
-        break;
-      case "down":
-        dy = SETTINGS.CELL_SIZE;
-        break;
-      case "left":
-        dx = -SETTINGS.CELL_SIZE;
-        break;
-      case "right":
-        dx = SETTINGS.CELL_SIZE;
-        break;
-    }
-
-    const visitedPositions = p.movePlayer(
-      dx,
-      dy,
-      SETTINGS.BOARD_WIDTH,
-      SETTINGS.BOARD_HEIGHT,
-    );
-
-    if (visitedPositions.length > 0) {
-      handleAppleEating(p, visitedPositions);
-    }
-  });
-}
-
-function checkCollisions() {
-  players.forEach((p) => {
-    if (!p.isAlive()) return;
-
-    const hitSelf = p.body
-      .slice(1)
-      .some((s) => s.x === p.pos.x && s.y === p.pos.y);
-    const hitOther = players.some(
-      (other) =>
-        p.id !== other.id &&
-        other.body.some((s) => s.x === p.pos.x && s.y === p.pos.y),
-    );
-
-    if (hitSelf || hitOther) {
-      p.applyDamage();
-    }
+      randomApples[appleIndex] = {
+        id: generateUUID(),
+        pos: getSafeApplePosition(
+          SETTINGS.BOARD_WIDTH,
+          SETTINGS.BOARD_HEIGHT,
+          SETTINGS.CELL_SIZE,
+          occupied,
+        ),
+        type: getRandomAppleType(),
+      };
+    });
   });
 }
 
 function checkWinner() {
-  const alivePlayers = players.filter((p) => p.isAlive());
+  const alivePlayers = Object.values(playerStates).filter((p) => p.isAlive);
 
-  if (players.length >= 2 && alivePlayers.length <= 1) {
+  if (Object.keys(playerStates).length >= 2 && alivePlayers.length <= 1) {
     const winnerId = alivePlayers[0]?.id || null;
     io.emit("game_over", { winnerId });
-    if (players[0] && players[1]) {
-      saveMatchResult(players[0].id, players[1].id, winnerId);
+    
+    const playerIds = Object.keys(playerStates);
+    if (playerIds.length >= 2) {
+      saveMatchResult(playerIds[0], playerIds[1], winnerId);
     }
+    
     if (winnerId) {
       console.log("Winner:", winnerId);
     } else {
       console.log("Draw: both snakes are too short.");
     }
+    
     if (gameLoop) {
       clearInterval(gameLoop);
       gameLoop = null;
@@ -361,7 +284,7 @@ function checkWinner() {
 }
 
 function handleAppleEating(
-  player: Player,
+  player: typeof playerStates[string],
   positions: { x: number; y: number }[],
 ) {
   positions.forEach((pos) => {
@@ -372,20 +295,22 @@ function handleAppleEating(
     if (appleIndex === -1) return;
 
     const apple = randomApples[appleIndex];
-    const occupied = players.flatMap((player) => player.body);
+    const occupied = Object.values(playerStates).flatMap((p) => p.body);
 
     switch (apple.type) {
       case "golden":
-        player.grow(3);
+        player.length += 3;
         break;
       case "blue":
-        player.increaseSpeed();
+        player.speed += 1;
         break;
       case "green":
-        player.applyDamage();
+        if (player.length > 2) {
+          player.length -= 1;
+        }
         break;
       default:
-        player.grow(1);
+        player.length += 1;
     }
 
     randomApples[appleIndex] = {
@@ -398,12 +323,11 @@ function handleAppleEating(
       ),
       type: getRandomAppleType(),
     };
-    io.emit("send_apple_data", randomApples);
   });
 }
 
 function playersReady(): boolean {
-  return players.length === 2 && players.every((player) => player.isReady);
+  return Object.keys(playerStates).length === 2 && Object.values(playerStates).every((p) => p.isReady);
 }
 
 function tryStartGame() {
@@ -411,27 +335,17 @@ function tryStartGame() {
 
   gameStarted = true;
   spawnApples();
-  io.emit("send_apple_data", randomApples);
+  broadcastGameState();
   io.emit("game_started");
-  gameState();
   gameLoop = setInterval(updateLogic, 1000 / SETTINGS.TICK_RATE);
 }
 
-function gameState() {
+function broadcastGameState() {
   io.emit(
     "player_moved",
-    players.map((p) => ({
-      id: p.id,
-      color: p.color,
-      pos: p.pos,
-      body: p.body,
-      length: p.length,
-      speed: p.speed,
-      direction: p.direction,
-      isAlive: p.isAlive(),
-      isReady: p.isReady,
-    })),
+    Object.values(playerStates),
   );
+  io.emit("send_apple_data", randomApples);
 }
 
 server.listen(3000, () => {
