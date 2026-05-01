@@ -21,6 +21,7 @@ const SETTINGS = {
   APPLE_COUNT: 10,
   INITIAL_LENGTH: 5,
   TICK_RATE: 10,
+  MAX_LENGTH: 40,
 };
 
 const app = express();
@@ -101,12 +102,7 @@ let randomApples: {
 }[] = [];
 let gameLoop: NodeJS.Timeout | null = null;
 let gameStarted = false;
-const opposites: Record<string, string> = {
-  up: "down",
-  down: "up",
-  left: "right",
-  right: "left",
-};
+let matchResultSaved = false;
 
 function getRandomAppleType(): AppleType {
   const roll = Math.random();
@@ -130,6 +126,63 @@ function spawnApples() {
       ),
       type: getRandomAppleType(),
     });
+  }
+}
+
+function endGame(winnerId: string | null) {
+  if (!gameStarted && matchResultSaved) return;
+
+  io.emit("game_over", { winnerId });
+
+  const playerIds = Object.keys(playerStates);
+  if (!matchResultSaved && playerIds.length >= 2) {
+    saveMatchResult(playerIds[0], playerIds[1], winnerId);
+    matchResultSaved = true;
+  }
+
+  if (winnerId) {
+    console.log("Winner:", winnerId);
+  } else {
+    console.log("Draw.");
+  }
+
+  if (gameLoop) {
+    clearInterval(gameLoop);
+    gameLoop = null;
+  }
+  gameStarted = false;
+}
+
+function getOpponentId(playerId: string): string | null {
+  return Object.keys(playerStates).find((id) => id !== playerId) || null;
+}
+
+function handlePlayerDeath(playerId: string) {
+  const playerState = playerStates[playerId];
+  if (!playerState) return;
+
+  playerState.isAlive = false;
+  playerState.length = 0;
+
+  const opponentId = getOpponentId(playerId);
+  const opponent = opponentId ? playerStates[opponentId] : null;
+  const winnerId = opponent?.isAlive ? opponent.id : null;
+  broadcastGameState();
+  endGame(winnerId);
+}
+
+function handleMaxLengthReached(playerId: string, length?: number) {
+  const playerState = playerStates[playerId];
+  if (!playerState) return;
+
+  if (typeof length === "number") {
+    playerState.length = length;
+  }
+
+  if (playerState.length > SETTINGS.MAX_LENGTH) {
+    playerState.isAlive = true;
+    broadcastGameState();
+    endGame(playerId);
   }
 }
 
@@ -172,7 +225,44 @@ io.on("connection", (socket) => {
         direction: data.direction,
         isAlive: data.isAlive,
       };
+
+      if (data.wonByLength || data.length > SETTINGS.MAX_LENGTH) {
+        handleMaxLengthReached(socket.id, data.length);
+      } else if (data.isAlive === false) {
+        handlePlayerDeath(socket.id);
+      }
     }
+  });
+
+  socket.on("player_died", () => {
+    handlePlayerDeath(socket.id);
+  });
+
+  socket.on("max_length_reached", (data: { id?: string; length?: number }) => {
+    handleMaxLengthReached(socket.id, data.length);
+  });
+
+  socket.on("apple_collected", (data: { id?: string; pos?: { x: number; y: number }; type?: AppleType }) => {
+    const appleIndex = randomApples.findIndex((apple) => {
+      if (data.id && apple.id === data.id) return true;
+      return data.pos && apple.pos.x === data.pos.x && apple.pos.y === data.pos.y;
+    });
+
+    if (appleIndex === -1) return;
+
+    const occupied = Object.values(playerStates).flatMap((p) => p.body);
+    randomApples[appleIndex] = {
+      id: generateUUID(),
+      pos: getSafeApplePosition(
+        SETTINGS.BOARD_WIDTH,
+        SETTINGS.BOARD_HEIGHT,
+        SETTINGS.CELL_SIZE,
+        occupied,
+      ),
+      type: getRandomAppleType(),
+    };
+
+    broadcastGameState();
   });
 
   socket.on("disconnect", () => {
@@ -185,6 +275,7 @@ io.on("connection", (socket) => {
       gameLoop = null;
     }
     gameStarted = false;
+    matchResultSaved = false;
     randomApples = [];
     broadcastGameState();
   });
@@ -223,25 +314,8 @@ function checkAppleCollisions() {
 
       if (appleIndex === -1) return;
 
-      const apple = randomApples[appleIndex];
       const occupied = Object.values(playerStates)
         .flatMap((p) => p.body);
-
-      switch (apple.type) {
-        case "golden":
-          playerState.length += 3;
-          break;
-        case "blue":
-          playerState.speed += 1;
-          break;
-        case "green":
-          if (playerState.length > 2) {
-            playerState.length -= 1;
-          }
-          break;
-        default:
-          playerState.length += 1;
-      }
 
       randomApples[appleIndex] = {
         id: generateUUID(),
@@ -259,71 +333,17 @@ function checkAppleCollisions() {
 
 function checkWinner() {
   const alivePlayers = Object.values(playerStates).filter((p) => p.isAlive);
+  const lengthWinner = Object.values(playerStates).find((p) => p.length > SETTINGS.MAX_LENGTH);
+
+  if (lengthWinner) {
+    endGame(lengthWinner.id);
+    return;
+  }
 
   if (Object.keys(playerStates).length >= 2 && alivePlayers.length <= 1) {
     const winnerId = alivePlayers[0]?.id || null;
-    io.emit("game_over", { winnerId });
-    
-    const playerIds = Object.keys(playerStates);
-    if (playerIds.length >= 2) {
-      saveMatchResult(playerIds[0], playerIds[1], winnerId);
-    }
-    
-    if (winnerId) {
-      console.log("Winner:", winnerId);
-    } else {
-      console.log("Draw: both snakes are too short.");
-    }
-    
-    if (gameLoop) {
-      clearInterval(gameLoop);
-      gameLoop = null;
-    }
-    gameStarted = false;
+    endGame(winnerId);
   }
-}
-
-function handleAppleEating(
-  player: typeof playerStates[string],
-  positions: { x: number; y: number }[],
-) {
-  positions.forEach((pos) => {
-    const appleIndex = randomApples.findIndex(
-      (a) => a.pos.x === pos.x && a.pos.y === pos.y,
-    );
-
-    if (appleIndex === -1) return;
-
-    const apple = randomApples[appleIndex];
-    const occupied = Object.values(playerStates).flatMap((p) => p.body);
-
-    switch (apple.type) {
-      case "golden":
-        player.length += 3;
-        break;
-      case "blue":
-        player.speed += 1;
-        break;
-      case "green":
-        if (player.length > 2) {
-          player.length -= 1;
-        }
-        break;
-      default:
-        player.length += 1;
-    }
-
-    randomApples[appleIndex] = {
-      id: generateUUID(),
-      pos: getSafeApplePosition(
-        SETTINGS.BOARD_WIDTH,
-        SETTINGS.BOARD_HEIGHT,
-        SETTINGS.CELL_SIZE,
-        occupied,
-      ),
-      type: getRandomAppleType(),
-    };
-  });
 }
 
 function playersReady(): boolean {
@@ -334,6 +354,7 @@ function tryStartGame() {
   if (gameStarted || gameLoop || !playersReady()) return;
 
   gameStarted = true;
+  matchResultSaved = false;
   spawnApples();
   broadcastGameState();
   io.emit("game_started");
